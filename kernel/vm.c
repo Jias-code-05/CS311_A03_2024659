@@ -24,6 +24,8 @@ kvmmake(void)
   pagetable_t kpgtbl;
 
   kpgtbl = (pagetable_t)kalloc();
+  if (kpgtbl == 0)
+    panic("kvmmake: out of memory");
   memset(kpgtbl, 0, PGSIZE);
 
   // uart registers
@@ -148,13 +150,91 @@ walkaddr(pagetable_t pagetable, uint64 va)
 
 
 #if defined(LAB_PGTBL) || defined(SOL_MMAP) || defined(SOL_COW)
+static void
+vmprintlevel(pagetable_t pagetable, int level, uint64 base)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) == 0)
+      continue;
+    uint64 va = base | ((uint64)i << PXSHIFT(level));
+    uint64 pa = PTE2PA(pte);
+    char perm[5];
+    int n = 0;
+    if (pte & PTE_R)
+      perm[n++] = 'R';
+    if (pte & PTE_W)
+      perm[n++] = 'W';
+    if (pte & PTE_X)
+      perm[n++] = 'X';
+    if (pte & PTE_U)
+      perm[n++] = 'U';
+    perm[n] = 0;
+    int leaf = pte & (PTE_R | PTE_W | PTE_X);
+    // Print each line with one printk to avoid interleaved fragments.
+    char *indent[] = {" .. .. ..", " .. ..", " .."};
+    printk("%s%p: pte %p pa %p%s%s%s\n", indent[level], (void *)va,
+           (void *)pte, (void *)pa,
+           n ? " " : "", perm, leaf && level > 0 ? " superpage" : "");
+    if (!leaf && level > 0)
+      vmprintlevel((pagetable_t)pa, level - 1, va);
+  }
+}
+
 void
 vmprint(pagetable_t pagetable)
 {
-  // your code here
+  printk("page table %p\n", (void *)pagetable);
+  vmprintlevel(pagetable, 2, 0);
 }
 #endif
 
+
+#ifdef LAB_PGTBL
+// Build kernel mappings before paging starts. User mappings still use
+// mappages(), so their allocation/copy/unmap paths remain 4 KiB only.
+static int
+kmappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+{
+  if (size == 0 || (va | pa | size) % PGSIZE != 0 || va >= MAXVA ||
+      size > MAXVA - va || pa + size < pa)
+    return -1;
+
+  while (size > 0) {
+    uint64 step = PGSIZE;
+    int target = 0;
+    if (va % SUPERPGSIZE == 0 && pa % SUPERPGSIZE == 0 &&
+        size >= SUPERPGSIZE) {
+      step = SUPERPGSIZE;
+      target = 1;
+    }
+    pagetable_t pt = pagetable;
+    for (int level = 2; level > target; level--) {
+      pte_t *pte = &pt[PX(level, va)];
+      if (*pte & PTE_V) {
+        if (PTE_LEAF(*pte))
+          return -1; // Never descend into an existing leaf.
+        pt = (pagetable_t)PTE2PA(*pte);
+      } else {
+        pagetable_t child = (pagetable_t)kalloc();
+        if (child == 0)
+          return -1;
+        memset(child, 0, PGSIZE);
+        *pte = PA2PTE(child) | PTE_V;
+        pt = child;
+      }
+    }
+    pte_t *pte = &pt[PX(target, va)];
+    if (*pte & PTE_V)
+      return -1;
+    *pte = PA2PTE(pa) | perm | PTE_V;
+    va += step;
+    pa += step;
+    size -= step;
+  }
+  return 0;
+}
+#endif
 
 // add a mapping to the kernel page table.
 // only used when booting.
@@ -162,7 +242,12 @@ vmprint(pagetable_t pagetable)
 void
 kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
+#ifdef LAB_PGTBL
+  // Boot cannot continue after a partial kernel mapping/allocation failure.
+  if (kmappages(kpgtbl, va, sz, pa, perm) != 0)
+#else
   if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+#endif
     panic("kvmmap");
 }
 

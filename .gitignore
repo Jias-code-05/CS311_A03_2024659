@@ -6,6 +6,7 @@ _*
 *.sym
 *.img
 /mkfs/mkfs
+/mkfs/mkfs.exe
 /kernel/kernel
 /user/usys.S
 .gdbinit

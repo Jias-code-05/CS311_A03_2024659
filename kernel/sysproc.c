@@ -107,10 +107,56 @@ sys_vmprint(void)
 #endif
 
 #ifdef LAB_PGTBL
-int
+uint64
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  enum { MAXPAGES = 4096 };
+  uchar bits[MAXPAGES / 8];
+  uint64 start, out, base;
+  int npages;
+  struct proc *p = myproc();
+
+  argaddr(0, &start);
+  argint(1, &npages);
+  argaddr(2, &out);
+  if (npages <= 0 || npages > MAXPAGES || start >= MAXVA)
+    return -1;
+  base = PGROUNDDOWN(start);
+  if ((uint64)npages > (MAXVA - base) / PGSIZE)
+    return -1;
+  int nbytes = (npages + 7) / 8;
+  if (out >= MAXVA || (uint64)nbytes > MAXVA - out)
+    return -1;
+
+  // Preflight every output page: copyout must not lazily allocate a hole
+  // or write a partial bitmap before discovering an invalid trailing page.
+  for (uint64 va = PGROUNDDOWN(out); va < out + nbytes; va += PGSIZE) {
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0 || (*pte & (PTE_V | PTE_U | PTE_R | PTE_W)) !=
+                    (PTE_V | PTE_U | PTE_R | PTE_W))
+      return -1;
+  }
+
+  memset(bits, 0, nbytes);
+  for (int i = 0; i < npages; i++) {
+    pte_t *pte = walk(p->pagetable, base + (uint64)i * PGSIZE, 0);
+    if (pte == 0 || (*pte & (PTE_V | PTE_U)) != (PTE_V | PTE_U) ||
+        !PTE_LEAF(*pte))
+      return -1;
+    if (*pte & PTE_A)
+      bits[i / 8] |= 1U << (i % 8);
+  }
+  if (copyout(p->pagetable, p->sz, out, (char *)bits, nbytes) < 0)
+    return -1;
+
+  // A process has no concurrent threads in xv6. Its mappings remain stable
+  // through these passes, including when the bitmap aliases a scanned page.
+  for (int i = 0; i < npages; i++) {
+    pte_t *pte = walk(p->pagetable, base + (uint64)i * PGSIZE, 0);
+    *pte &= ~PTE_A;
+  }
+  // userret also fences before using this page table, even after migration.
+  sfence_vma();
   return 0;
 }
 #endif
