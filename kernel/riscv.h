@@ -1,5 +1,14 @@
 #ifndef __ASSEMBLER__
 
+// Current frame pointer for kernel stack backtraces.
+static inline uint64
+r_fp(void)
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x));
+  return x;
+}
+
 // which hart (core) is this?
 static inline uint64
 r_mhartid()

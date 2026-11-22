@@ -124,6 +124,12 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  // A reused proc must start without any active alarm.
+  p->alarm_interval = 0;
+  p->alarm_ticks = 0;
+  p->alarm_handler = 0;
+  p->alarm_active = 0;
+  memset(&p->alarm_saved, 0, sizeof(p->alarm_saved));
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {

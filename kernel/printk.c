@@ -134,12 +134,32 @@ printk(char *fmt, ...)
   return 0;
 }
 
+// Walk kernel stack frames, from current frame to the stack page boundary.
+void
+backtrace(void)
+{
+  uint64 fp = r_fp();
+  uint64 page_top = PGROUNDUP(fp);
+  uint64 page_bottom = page_top - PGSIZE;
+
+  printk("backtrace:\n");
+  while (fp >= page_bottom + 16 && fp <= page_top) {
+    uint64 ra = *(uint64 *)(fp - 8);
+    printk("%p\n", (void*)ra);
+    uint64 next_fp = *(uint64 *)(fp - 16);
+    if (next_fp <= fp || next_fp > page_top)
+      break;
+    fp = next_fp;
+  }
+}
+
 void
 panic(char *s)
 {
   panicking = 1;
   printk("panic: ");
   printk("%s\n", s);
+  backtrace();
   panicked = 1; // freeze uart output from other CPUs
   for (;;)
     ;

@@ -1,0 +1,26 @@
+CS311 A03 Task 2 â€” MIT 2026 Traps: RISC-V assembly
+These addresses were extracted from this checkout's user/call.asm.
+
+1. The first eight integer/pointer arguments are passed in a0 through a7.
+   In main's printf call, 13 is the second variable argument and is passed in a2.
+
+2. There is no explicit call to f or g in main: the compiler has inlined/optimized those functions.
+
+3. printf is at address: 0x0000000000000702
+
+4. Immediately after the jalr to printf in main, ra is 0x34,
+   i.e. the next instruction address after the call to printf.
+
+5. The snippet prints: He110 World
+   57616 in hexadecimal is e110. RISC-V little-endian stores i=0x00646c72
+   as the bytes 72 6c 64 00, which represent the string "rld".
+
+6. For a big-endian system, use unsigned int i = 0x726c6400;
+   You would NOT change 57616; formatting the integer as hexadecimal
+   does not depend on byte order.
+
+7. The value after y= is undefined/unpredictable: printf's format asks
+   for two integers, but only 3 was supplied. The second integer is
+   read from an argument register without a valid supplied argument.
+
+Check questions 1â€“4 against your compiled user/call.asm before submitting.
